@@ -1,0 +1,65 @@
+name: Publish MELK Studio web OTA v1.1.7
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-web-ota.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-web-ota
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout OTA hosting repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Checkout verified MELK Studio v1.1.7 source
+        uses: actions/checkout@v4
+        with:
+          repository: Muhammadusamataj/melk-studio-app
+          ref: fc70b5c73b0ff10c7ac2fb383cb5bef50381bdbb
+          path: app-source
+          persist-credentials: false
+
+      - name: Build web OTA zip and checksum manifest
+        run: |
+          python3 app-source/tools/make-ota.py 1.1.7 \
+            https://muhammadusamataj.github.io/melk-studio-ota-/ota/ \
+            --src app-source/www
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          m=json.loads(pathlib.Path('ota-out/melk-version.json').read_text())
+          z=pathlib.Path('ota-out/melk-1.1.7.zip')
+          assert m['version']=='1.1.7'
+          assert m['sha256']==hashlib.sha256(z.read_bytes()).hexdigest()
+          print('OTA package verified:',z.stat().st_size,'bytes')
+          PY
+
+      - name: Publish ZIP first, manifest last
+        run: |
+          mkdir -p ota
+          cp ota-out/melk-1.1.7.zip ota/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ota/melk-1.1.7.zip
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish MELK Studio v1.1.7 web OTA ZIP"
+            git push
+          fi
+          cp ota-out/melk-version.json ota/melk-version.json
+          git add ota/melk-version.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Point web OTA manifest to v1.1.7"
+            git push
+          fi
